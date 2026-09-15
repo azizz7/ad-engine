@@ -1,9 +1,8 @@
 import { useState, useRef } from 'react';
-import axios from 'axios';
-import { Upload, FileText, CheckCircle, AlertCircle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Upload, AlertCircle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { api } from '@/lib/api';
 
 interface FileUploadProps {
   onUploadSuccess: (datasetId: number) => void;
@@ -28,10 +27,8 @@ export default function FileUpload({ onUploadSuccess }: FileUploadProps) {
     formData.append('file', file);
 
     try {
-      const response = await axios.post('http://localhost:8000/api/upload', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+      const response = await api.post('/api/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
       onUploadSuccess(response.data.dataset_id);
     } catch (err: any) {
@@ -62,6 +59,8 @@ export default function FileUpload({ onUploadSuccess }: FileUploadProps) {
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
         onClick={() => fileInputRef.current?.click()}
+        role="button"
+        aria-label="Upload a CSV file of ad performance data"
       >
         <input
           type="file"
@@ -84,8 +83,19 @@ export default function FileUpload({ onUploadSuccess }: FileUploadProps) {
         <h3 className="text-lg font-semibold">
           {uploading ? 'Uploading...' : 'Upload Ad Data'}
         </h3>
-        <p className="mt-2 text-sm text-muted-foreground max-w-xs">
+        <p className="mt-2 text-sm text-muted-foreground max-w-sm">
           Drag and drop your CSV file here, or click to select a file.
+        </p>
+        <p className="mt-3 text-xs text-muted-foreground max-w-sm">
+          Required columns: <code className="text-foreground">date</code>,{' '}
+          <code className="text-foreground">impressions</code>,{' '}
+          <code className="text-foreground">clicks</code>,{' '}
+          <code className="text-foreground">spend</code>. Optional:{' '}
+          <code className="text-foreground">platform</code>,{' '}
+          <code className="text-foreground">conversions</code>,{' '}
+          <code className="text-foreground">revenue</code>,{' '}
+          <code className="text-foreground">ad_name</code> or{' '}
+          <code className="text-foreground">campaign_name</code>.
         </p>
 
         {error && (

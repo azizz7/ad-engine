@@ -26,7 +26,8 @@ python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install --upgrade pip
 pip install -r requirements.txt
-uvicorn main:app --reload
+cp .env.example .env   # then set SECRET_KEY (see comment in the file)
+uvicorn app.main:app --reload
 ```
 
 If you encounter build errors with Python 3.13, consider using Python 3.11 or 3.12:
@@ -39,13 +40,30 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Backend runs on `http://localhost:8000`
+Backend runs on `http://localhost:8000`. On first login with no users in the
+database, the credentials below bootstrap a default admin account:
+
+```
+email: admin@example.com
+password: admin
+```
+
+To (re)create/reset that admin account directly:
+```bash
+python -m scripts.reset_admin
+```
+
+Run the test suite:
+```bash
+pytest
+```
 
 ### Frontend Setup
 
 ```bash
 cd frontend
 npm install
+cp .env.local.example .env.local   # set NEXT_PUBLIC_API_URL if not localhost:8000
 npm run dev
 ```
 
@@ -55,17 +73,39 @@ Frontend runs on `http://localhost:3000`
 
 ```
 ├── backend/
-│   ├── main.py              # FastAPI application
-│   ├── analytics.py         # Analytics engine
-│   ├── ml_models.py         # ML models
-│   ├── insights.py          # Insights generation
+│   ├── app/
+│   │   ├── main.py              # FastAPI app factory, middleware, router registration
+│   │   ├── core/                # Config, security (JWT/hashing), logging, rate limiting
+│   │   ├── db/                  # SQLAlchemy session/engine + data-access (crud) functions
+│   │   ├── models/               # SQLAlchemy ORM models (User, Dataset, ...)
+│   │   ├── schemas/              # Pydantic request/response models
+│   │   ├── services/             # Business logic: analytics, ML, insights, ingestion,
+│   │   │                         #   ad-platform integrations (all framework-agnostic)
+│   │   └── api/routes/           # FastAPI routers (auth, datasets, integrations, health)
+│   ├── scripts/                  # One-off operational scripts (e.g. reset_admin)
+│   ├── tests/                    # pytest suite (unit + API integration tests)
 │   └── requirements.txt
 ├── frontend/
-│   ├── app/                 # Next.js app directory
+│   ├── app/                 # Next.js app directory (pages)
 │   ├── components/          # React components
+│   ├── context/             # AuthContext (session state, axios auth wiring)
+│   ├── lib/                 # Shared API client (axios instance, base URL)
 │   └── package.json
 └── README.md
 ```
+
+### Backend architecture notes
+
+- **`app/api/routes`** only handles HTTP concerns (request parsing, status
+  codes, response shaping) and delegates everything else.
+- **`app/services`** holds all business logic (metrics computation, ML
+  training/prediction, insight generation, dataset ingestion) with no
+  FastAPI or SQLAlchemy imports, so it can be unit-tested in isolation.
+- **`app/db/crud.py`** is the only place that talks to the ORM for
+  datasets; every read/write is scoped by `user_id` so one account can
+  never see or delete another account's data.
+- **`app/core/config.py`** centralizes all environment variables behind a
+  single `Settings` object — no other module reads `os.environ` directly.
 
 ## API Endpoints
 
@@ -109,8 +149,18 @@ A sample CSV file (`sample_data.csv`) is included in the root directory for test
 
 ## Development Notes
 
-- Backend uses in-memory storage (for MVP). In production, use a database.
-- ML models are trained on-demand when data is uploaded
-- Frontend and backend run on separate ports (3000 and 8000)
-- CORS is configured to allow frontend-backend communication
+- Backend persists to SQLite (`backend/ad_engine.db`, gitignored) via SQLAlchemy;
+  swap `DATABASE_URL` for a Postgres/MySQL URL to move to a real database.
+- Datasets are scoped per-user (`Dataset.user_id`) — one account can never see
+  or delete another account's uploads.
+- Trained ML models are cached to disk per-dataset (`backend/models_cache/`,
+  gitignored) and retrained on-demand if the cache is missing or invalid.
+- Frontend and backend run on separate ports (3000 and 8000); the frontend's
+  API base URL is configurable via `NEXT_PUBLIC_API_URL`.
+- CORS is configured (via `CORS_ORIGINS`) to allow frontend-backend communication.
+- Uploads without `revenue`/`conversions` columns are fully supported — those
+  metrics report `null` (shown as "N/A" in the UI) rather than erroring.
+- A minimal in-memory rate limiter protects `/token` against brute-force
+  login attempts; replace with a shared store (e.g. Redis) for a
+  multi-process deployment.
 

@@ -13,3 +13,10 @@ build/
 .DS_Store
 *.log
 
+# Runtime state - never source, always regenerated
+*.db
+*.sqlite3
+.pytest_cache/
+.coverage
+htmlcov/
+

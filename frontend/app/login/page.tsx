@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import axios from 'axios';
+import { api } from '@/lib/api';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,7 +14,7 @@ export default function LoginPage() {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
-    const { login } = useAuth();
+    const { login, sessionMessage, clearSessionMessage } = useAuth();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -27,10 +27,14 @@ export default function LoginPage() {
             formData.append('username', email);
             formData.append('password', password);
 
-            const response = await axios.post('http://localhost:8000/token', formData);
+            const response = await api.post('/token', formData);
             login(response.data.access_token);
-        } catch (err) {
-            setError('Invalid credentials');
+        } catch (err: any) {
+            if (err.response?.status === 429) {
+                setError('Too many attempts. Please wait a moment and try again.');
+            } else {
+                setError('Invalid credentials');
+            }
         } finally {
             setLoading(false);
         }
@@ -51,6 +55,14 @@ export default function LoginPage() {
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
+                    {sessionMessage && (
+                        <div
+                            className="mb-4 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-sm text-yellow-200"
+                            onClick={clearSessionMessage}
+                        >
+                            {sessionMessage}
+                        </div>
+                    )}
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div className="space-y-2">
                             <Label htmlFor="email">Email</Label>

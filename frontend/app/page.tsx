@@ -1,209 +1,211 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import axios from 'axios';
 import { useAuth } from '@/context/AuthContext';
+import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Activity, LogOut, Plus, Facebook, Chrome } from 'lucide-react';
+import { Activity, LogOut } from 'lucide-react';
 import FileUpload from '@/components/FileUpload';
+import DatasetSwitcher from '@/components/DatasetSwitcher';
+import DataSourceMenu from '@/components/DataSourceMenu';
+import IntegrationButtons from '@/components/IntegrationButtons';
 import MetricsOverview from '@/components/MetricsOverview';
 import PerformanceCharts from '@/components/PerformanceCharts';
 import TopPerformers from '@/components/TopPerformers';
 import InsightsPanel from '@/components/InsightsPanel';
-
-import { cn } from '@/lib/utils';
+import ForecastCard from '@/components/ForecastCard';
+import ErrorBanner from '@/components/ErrorBanner';
+import DashboardSkeleton from '@/components/DashboardSkeleton';
 
 export default function Dashboard() {
-  // Extract token
   const { logout, isAuthenticated, token } = useAuth();
   const [datasetId, setDatasetId] = useState<number | null>(null);
+  // Explicit "show the upload form" intent, kept separate from datasetId so
+  // "Upload new dataset" can't be silently undone by the auto-select-latest
+  // effect below re-populating datasetId from the datasets list.
+  const [showUploadForm, setShowUploadForm] = useState(false);
+  const [hasAutoSelected, setHasAutoSelected] = useState(false);
+  const [datasetsRefreshToken, setDatasetsRefreshToken] = useState(0);
+
   const [analytics, setAnalytics] = useState<any>(null);
   const [insights, setInsights] = useState<any>(null);
   const [chartData, setChartData] = useState<any[]>([]);
+  const [predictions, setPredictions] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Mock Connection States
   const [isFacebookConnected, setIsFacebookConnected] = useState(false);
   const [isGoogleConnected, setIsGoogleConnected] = useState(false);
-
-  // Demo Mode State
   const [isDemoMode, setIsDemoMode] = useState(false);
 
-  // Auth Config
-  const authConfig = {
-    headers: { Authorization: `Bearer ${token}` }
-  };
+  // On first load with a valid session, select the most recently uploaded
+  // dataset (if any). Runs once per session, so it can never fight with a
+  // user-initiated action like "Upload new dataset" or "Delete".
+  useEffect(() => {
+    if (!token || hasAutoSelected) return;
+
+    api
+      .get('/api/datasets')
+      .then((res) => {
+        if (res.data?.length > 0) setDatasetId(res.data[0].id);
+      })
+      .catch((err) => console.error('Failed to fetch datasets', err))
+      .finally(() => setHasAutoSelected(true));
+  }, [token, hasAutoSelected]);
 
   useEffect(() => {
-    // If we have a dataset, load its data
-    if (datasetId && token) {
-      loadDashboardData(datasetId);
-    } else if (token) {
-      // Try to load latest dataset
-      fetchLatestDataset();
-    }
+    if (!datasetId || !token) return;
+
+    setLoading(true);
+    setError(null);
+
+    Promise.all([
+      api.get(`/api/analytics?dataset_id=${datasetId}`),
+      api.get(`/api/insights?dataset_id=${datasetId}`),
+      api.get(`/api/data?dataset_id=${datasetId}`),
+      api.get(`/api/predictions?dataset_id=${datasetId}`).catch(() => ({ data: null })),
+    ])
+      .then(([analyticsRes, insightsRes, dataRes, predictionsRes]) => {
+        setAnalytics(analyticsRes.data);
+        setInsights(insightsRes.data);
+        setChartData(dataRes.data);
+        setPredictions(predictionsRes.data);
+      })
+      .catch((err) => {
+        console.error('Error loading dashboard data', err);
+        setError(err.response?.data?.detail || 'Failed to load dashboard data. Please try again.');
+      })
+      .finally(() => setLoading(false));
   }, [datasetId, token]);
 
-  const fetchLatestDataset = async () => {
-    try {
-      const response = await axios.get('http://localhost:8000/api/datasets', authConfig);
-      if (response.data && response.data.length > 0) {
-        setDatasetId(response.data[0].id);
-      }
-    } catch (err) {
-      console.error('Failed to fetch datasets', err);
-    }
+  const handleUploadSuccess = (newDatasetId: number) => {
+    setDatasetId(newDatasetId);
+    setShowUploadForm(false);
+    setHasAutoSelected(true);
+    setDatasetsRefreshToken((n) => n + 1);
   };
 
-  const loadDashboardData = async (id: number) => {
-    setLoading(true);
-    try {
-      const [analyticsRes, insightsRes, dataRes] = await Promise.all([
-        axios.get(`http://localhost:8000/api/analytics?dataset_id=${id}`, authConfig),
-        axios.get(`http://localhost:8000/api/insights?dataset_id=${id}`, authConfig),
-        axios.get(`http://localhost:8000/api/data?dataset_id=${id}`, authConfig)
-      ]);
-
-      setAnalytics(analyticsRes.data);
-      setInsights(insightsRes.data);
-      setChartData(dataRes.data);
-    } catch (err) {
-      console.error('Error loading dashboard data', err);
-    } finally {
-      setLoading(false);
+  const handleDatasetDeleted = (deletedId: number) => {
+    setDatasetsRefreshToken((n) => n + 1);
+    if (deletedId === datasetId) {
+      setDatasetId(null);
+      setAnalytics(null);
+      setInsights(null);
+      setChartData([]);
+      setPredictions(null);
+      setShowUploadForm(true);
     }
   };
 
   const handleIntegration = async (platform: 'facebook' | 'google') => {
     setLoading(true);
+    setError(null);
     try {
-      // 1. Connect
-      await axios.post(`http://localhost:8000/api/integrations/${platform}/connect`, {}, authConfig);
-
+      await api.post(`/api/integrations/${platform}/connect`, {});
       if (platform === 'facebook') setIsFacebookConnected(true);
       if (platform === 'google') setIsGoogleConnected(true);
 
-      // 2. Sync Data
-      const syncRes = await axios.post(`http://localhost:8000/api/integrations/${platform}/sync?use_mock=${isDemoMode}`, {}, authConfig);
+      const syncRes = await api.post(`/api/integrations/${platform}/sync?use_mock=${isDemoMode}`, {});
 
-      // 3. Handle Result
       if (syncRes.data.rows === 0) {
-        alert(syncRes.data.message);
+        setError(syncRes.data.message);
       } else if (syncRes.data.dataset_id) {
+        setShowUploadForm(false);
         setDatasetId(syncRes.data.dataset_id);
+        setDatasetsRefreshToken((n) => n + 1);
       }
-
-    } catch (err) {
+    } catch (err: any) {
       console.error(`Failed to connect ${platform}`, err);
+      setError(err.response?.data?.detail || `Failed to connect to ${platform}. Please try again.`);
     } finally {
       setLoading(false);
     }
   };
 
-
-
-
-
   if (!isAuthenticated) return null;
 
+  const showUpload = showUploadForm || (!datasetId && hasAutoSelected);
+
   return (
-    <div className="min-h-screen p-6 space-y-8">
-      {/* Header */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            <Activity className="h-8 w-8 text-primary" />
-            Ad Intelligence Engine
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Real-time analytics and predictive insights for your campaigns.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-4">
-          {/* Demo Mode Toggle */}
-          <div className="flex items-center space-x-2 bg-secondary/50 p-2 rounded-lg border border-border/50">
-            <span className={cn("text-xs font-medium", !isDemoMode ? "text-primary" : "text-muted-foreground")}>Real Data</span>
-            <button
-              onClick={() => setIsDemoMode(!isDemoMode)}
-              className={cn(
-                "relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2",
-                isDemoMode ? "bg-primary" : "bg-input"
-              )}
-            >
-              <span className={cn("translate-x-0 inline-block h-3 w-3 transform rounded-full bg-white transition transition-transform", isDemoMode ? "translate-x-5" : "translate-x-1")} />
-            </button>
-            <span className={cn("text-xs font-medium", isDemoMode ? "text-primary" : "text-muted-foreground")}>Simulation</span>
+    <div className="min-h-screen px-4 py-6 sm:px-6 space-y-6 max-w-7xl mx-auto">
+      <header className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-primary" />
+            <span className="font-semibold whitespace-nowrap">Ad Intelligence Engine</span>
           </div>
-
-          {/* Functional Integrations */}
-          <Button
-            variant={isFacebookConnected ? "secondary" : "outline"}
-            size="sm"
-            className="hidden lg:flex gap-2 transition-all relative overflow-hidden"
-            onClick={() => handleIntegration('facebook')}
-            disabled={loading}
-          >
-            <div className="absolute inset-0 bg-blue-500/10 pointer-events-none" style={{ opacity: isFacebookConnected ? 1 : 0 }} />
-            <Facebook className={cn("h-4 w-4 relative z-10", isFacebookConnected ? "text-blue-500 fill-current" : "text-blue-600")} />
-            <span className="relative z-10">{isFacebookConnected ? "Facebook Synced" : "Connect Facebook"}</span>
-          </Button>
-          <Button
-            variant={isGoogleConnected ? "secondary" : "outline"}
-            size="sm"
-            className="hidden lg:flex gap-2 transition-all relative overflow-hidden"
-            onClick={() => handleIntegration('google')}
-            disabled={loading}
-          >
-            <div className="absolute inset-0 bg-red-500/10 pointer-events-none" style={{ opacity: isGoogleConnected ? 1 : 0 }} />
-            <Chrome className={cn("h-4 w-4 relative z-10", isGoogleConnected ? "text-red-500 fill-current" : "text-red-500")} />
-            <span className="relative z-10">{isGoogleConnected ? "Google Synced" : "Connect Google"}</span>
-          </Button>
-
-          <Button variant="ghost" onClick={logout}>
+          {!showUpload && (
+            <DatasetSwitcher
+              selectedDatasetId={datasetId}
+              onSelect={setDatasetId}
+              onUploadNew={() => setShowUploadForm(true)}
+              onDeleted={handleDatasetDeleted}
+              refreshToken={datasetsRefreshToken}
+            />
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {!showUpload && (
+            <DataSourceMenu
+              isDemoMode={isDemoMode}
+              onToggleDemoMode={() => setIsDemoMode(!isDemoMode)}
+              onConnect={handleIntegration}
+              isFacebookConnected={isFacebookConnected}
+              isGoogleConnected={isGoogleConnected}
+              loading={loading}
+            />
+          )}
+          <Button variant="ghost" size="sm" onClick={() => logout()}>
             <LogOut className="h-4 w-4 mr-2" />
-            Sign Out
+            Sign out
           </Button>
         </div>
       </header>
 
-      {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
-        {/* Left Col: Upload & Stats */}
-        <div className="lg:col-span-8 space-y-6">
-          {!datasetId && (
-            <div className="mb-6">
-              <FileUpload onUploadSuccess={setDatasetId} />
+      {showUpload ? (
+        <div className="flex flex-col items-center gap-8 py-10">
+          <div className="w-full max-w-lg text-center space-y-1">
+            <h1 className="text-xl font-semibold">Upload your ad performance data</h1>
+            <p className="text-sm text-muted-foreground">
+              Get metrics, a 7-day forecast, and plain-English recommendations in seconds.
+            </p>
+          </div>
+          <div className="w-full max-w-lg">
+            <FileUpload onUploadSuccess={handleUploadSuccess} />
+          </div>
+          <div className="flex flex-col items-center gap-3">
+            <p className="text-xs text-muted-foreground">or import from a connected platform</p>
+            <IntegrationButtons
+              isDemoMode={isDemoMode}
+              onToggleDemoMode={() => setIsDemoMode(!isDemoMode)}
+              onConnect={handleIntegration}
+              isFacebookConnected={isFacebookConnected}
+              isGoogleConnected={isGoogleConnected}
+              loading={loading}
+            />
+          </div>
+        </div>
+      ) : (
+        <>
+          {loading && !analytics ? (
+            <DashboardSkeleton />
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              <div className="lg:col-span-8 space-y-6">
+                <MetricsOverview analytics={analytics} />
+                <PerformanceCharts data={chartData} />
+              </div>
+              <div className="lg:col-span-4 space-y-6">
+                <ForecastCard predictions={predictions} />
+                <InsightsPanel data={insights} />
+                <TopPerformers analytics={analytics} />
+              </div>
             </div>
           )}
-
-          {datasetId && (
-            <MetricsOverview analytics={analytics} />
-          )}
-
-          {chartData.length > 0 && (
-            <PerformanceCharts data={chartData} />
-          )}
-        </div>
-
-        {/* Right Col: Insights & Top Ads */}
-        <div className="lg:col-span-4 space-y-6">
-          {datasetId && (
-            <>
-              <div className="flex justify-between items-center mb-2">
-                <Button variant="outline" size="sm" onClick={() => setDatasetId(null)}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  New Upload
-                </Button>
-              </div>
-              <InsightsPanel data={insights} />
-              <TopPerformers analytics={analytics} />
-            </>
-          )}
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }

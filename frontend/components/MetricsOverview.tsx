@@ -1,6 +1,7 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { DollarSign, MousePointer, Eye, TrendingUp, TrendingDown, Target } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
+import { DollarSign, TrendingUp, Eye, Target } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatCurrency, formatNumber } from '@/lib/format';
 import { motion } from 'framer-motion';
 
 interface MetricsOverviewProps {
@@ -12,31 +13,36 @@ export default function MetricsOverview({ analytics }: MetricsOverviewProps) {
 
   const { overall_metrics } = analytics;
 
+  // `null` means "not available for this dataset" (e.g. no revenue column
+  // was uploaded) and should read as N/A, not $0 - those mean very
+  // different things to someone reading their ad performance.
+  const money = (value: number | null | undefined) => (value == null ? 'N/A' : formatCurrency(value));
+
   const metrics = [
     {
       title: "Total Spend",
-      value: `$${(overall_metrics.total_spend || 0).toLocaleString()}`,
+      value: money(overall_metrics.total_spend),
       icon: DollarSign,
       color: "text-green-500",
       bg: "bg-green-500/10"
     },
     {
       title: "Total Revenue",
-      value: `$${(overall_metrics.total_revenue || 0).toLocaleString()}`,
+      value: money(overall_metrics.total_revenue),
       icon: TrendingUp,
       color: "text-blue-500",
       bg: "bg-blue-500/10"
     },
     {
       title: "ROAS",
-      value: `${(overall_metrics.roas || 0).toFixed(2)}x`,
+      value: overall_metrics.roas == null ? 'N/A' : `${overall_metrics.roas.toFixed(2)}x`,
       icon: Target,
       color: "text-purple-500",
       bg: "bg-purple-500/10"
     },
     {
       title: "Impressions",
-      value: (overall_metrics.total_impressions || 0).toLocaleString(),
+      value: formatNumber(overall_metrics.total_impressions ?? 0),
       icon: Eye,
       color: "text-yellow-500",
       bg: "bg-yellow-500/10"
