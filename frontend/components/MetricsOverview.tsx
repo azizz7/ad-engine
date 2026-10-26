@@ -16,7 +16,7 @@ export default function MetricsOverview({ analytics }: MetricsOverviewProps) {
   // `null` means "not available for this dataset" (e.g. no revenue column
   // was uploaded) and should read as N/A, not $0 - those mean very
   // different things to someone reading their ad performance.
-  const money = (value: number | null | undefined) => (value == null ? 'N/A' : formatCurrency(value));
+  const money = (value: number | null | undefined) => (!value ? 'N/A' : formatCurrency(value));
 
   const metrics = [
     {
